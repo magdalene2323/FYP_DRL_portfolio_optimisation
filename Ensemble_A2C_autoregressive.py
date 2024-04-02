@@ -32,6 +32,13 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True' # silence error lbmp5md.dll
 from preprocessing.preprocessors import data_split
 
 
+def metrics(value): 
+    rets = value.pct_change(1) 
+    sharpe = (252 ** 0.5) * rets.mean() / rets.std()
+    vol = (rets.std()*np.sqrt(252))*100
+    cagr = ((value.iloc[-1]/value.iloc[0])**(1/(len(value.index)/252))-1)*100
+    max_dd = qs.stats.max_drawdown(value )
+    return sharpe, vol, cagr, max_dd 
 
 def train_A2C_intrinsic(env_train, network, model_name, timesteps, v_in_coef, r_in_coef, v_ex_coef, ent_coef, lr_alpha, lr_beta, rms_prop_eps, verbose, seed,preproc, n_steps,start_intrinsic_update):
     """A2C+Intrinsic model""" 
@@ -157,26 +164,10 @@ def DRL_intrinsic_prediction(df,
             # print(env_test.render())
             last_state = env_trade.env_method("render")[0] 
             
-            
-    
-            
-        
-    df_total_value = pd.read_csv('results/account_value_trade_{}_{}.csv'.format(name, iter_num),index_col=0)
-    df_total_value.columns = ['account_value_trade']
-    df_total_value['daily_return'] = df_total_value.pct_change(1) 
-    sharpe = (252 ** 0.5) * df_total_value['daily_return'].mean() / \
-                     df_total_value['daily_return'].std()
-                     
-    volatility = qs.stats.volatility(df_total_value['account_value_trade'])
-    cagr = qs.stats.cagr(df_total_value['account_value_trade']) 
-    max_dd = qs.stats.max_drawdown(df_total_value['account_value_trade'])
-    
-            
-    
     
     df_last_state = pd.DataFrame({'last_state': last_state})
     df_last_state.to_csv('results/last_state_{}_{}.csv'.format(name, i), index=False)
-    return last_state, sharpe, volatility, cagr, max_dd 
+    return last_state
 
 def DRL_intrinsic_validation(model, test_data, test_env, test_obs) -> None:
     ###validation process###
@@ -199,13 +190,12 @@ def get_validation_sharpe(iteration):
 
 
 
-def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, validation_window, timesteps,name,v_in_coef, v_ex_coef, r_in_coef, ent_coef, lr_alpha, lr_beta, 
+def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, validation_window, timesteps,v_in_coef, v_ex_coef, r_in_coef, ent_coef, lr_alpha, lr_beta, 
                               rms_prop_eps, verbose, seed, turb_var, preproc, n_steps, start_intrinsic_update):
     print("============Start A2C Strategy============")
     unique_train_date = df[(df.datadate > 20081231)&(df.datadate <= 20200707)].datadate.unique()
 
     last_state_ensemble, last_state_a2c, last_state_org, model_use =[], [] , [] , []    
-    infos = pd.DataFrame() 
     
 
     # based on the analysis of the in-sample data
@@ -218,7 +208,7 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
     start = time.time()
     for i in range(rebalance_window + validation_window, len(unique_trade_date) , rebalance_window):
         
-        
+        print("ITER NUMBER: ", i )
         print("============================================")
         ## initial state is empty
         if i - rebalance_window - validation_window == 0:
@@ -310,7 +300,7 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
         print("======A2C Intrinsic Training========")     
         
         
-        model_a2c = train_A2C_intrinsic(env_train, network=network, model_name="A2C_30k_dow_{}".format(i), timesteps=timesteps, v_in_coef=v_in_coef, r_in_coef=r_in_coef, v_ex_coef=v_ex_coef,
+        model_a2c = train_A2C_intrinsic(env_train, network=network, model_name="A2CIntrinsic_auto_{}_{}".format(network, i), timesteps=timesteps, v_in_coef=v_in_coef, r_in_coef=r_in_coef, v_ex_coef=v_ex_coef,
                                                 ent_coef=ent_coef, lr_alpha = lr_alpha, lr_beta = lr_beta, rms_prop_eps=rms_prop_eps, verbose=verbose, seed=seed, preproc=preproc, n_steps=n_steps, start_intrinsic_update=start_intrinsic_update) 
         
         DRL_intrinsic_validation(model=model_a2c, test_data=validation, test_env=env_val, test_obs=obs_val)
@@ -320,7 +310,7 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
         print("======A2C Original Training========")
         
         env_train = DummyVecEnv([lambda: StockEnvTrain(train,preproc=True)])
-        model_a2c_org = train_A2C_no_intrinsic(env_train, network=network , model_name="A2C_30k_dow_{}".format(i), timesteps=timesteps, v_in_coef=v_in_coef, v_ex_coef=v_ex_coef, 
+        model_a2c_org = train_A2C_no_intrinsic(env_train, network=network ,model_name="A2CIntrinsic_auto_{}_{}".format(network, i), timesteps=timesteps, v_in_coef=v_in_coef, v_ex_coef=v_ex_coef, 
                                                 ent_coef=ent_coef, lr_alpha = lr_alpha,lr_beta=lr_beta, rms_prop_eps=rms_prop_eps, verbose=verbose, seed=seed, preproc=preproc, n_steps=n_steps)
         
         
@@ -331,7 +321,7 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
         obs_val = env_val.reset()
         
         
-        _ = DRL_intrinsic_validation(model=model_a2c_org, test_data=validation, test_env=env_val, test_obs=obs_val) # NONE 
+        DRL_intrinsic_validation(model=model_a2c_org, test_data=validation, test_env=env_val, test_obs=obs_val) # NONE 
         sharpe_a2c_org = get_validation_sharpe(i) 
         
         print("======A2C Validation from: ", unique_trade_date[i - rebalance_window - validation_window], "to ",
@@ -358,7 +348,7 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
         print("======Trading from: ", unique_trade_date[i - rebalance_window - 10], "to ", unique_trade_date[i])
         print("Used Model: ", model_ensemble)
         
-        last_state_a2c , trading_sharpe_a2c, volatility_a2c, cagr_a2c, max_dd_a2c = DRL_intrinsic_prediction(df=df, model= model_a2c, name='A2CIntrinsic',
+        last_state_a2c  = DRL_intrinsic_prediction(df=df, model= model_a2c, name=f'IntrinsicT{timesteps//1000}S{seed}Network{network}',
                                         last_state=last_state_a2c,  iter_num=i,
                                         unique_trade_date=unique_trade_date,
                                         rebalance_window=rebalance_window,
@@ -366,31 +356,35 @@ def run_a2c_ensemble_strategy(df, network, unique_trade_date, rebalance_window, 
                                         initial=initial )
         
         
-        last_state_org , trading_sharpe_org, volatility_org, cagr_org, max_dd_org = DRL_intrinsic_prediction(df=df, model= model_a2c_org, name='A2COriginal',
+        last_state_org = DRL_intrinsic_prediction(df=df, model= model_a2c_org, name=f'OriginalT{timesteps//1000}S{seed}Network{network}',
                                         last_state=last_state_org ,  iter_num=i,
                                         unique_trade_date=unique_trade_date,
                                         rebalance_window=rebalance_window,
                                         turbulence_threshold=turbulence_threshold,
                                         initial=initial )
         
-        last_state_ensemble , sharpe, volatility, cagr, max_dd = DRL_intrinsic_prediction(df=df, model=model_ensemble, name=name,
+        last_state_ensemble  = DRL_intrinsic_prediction(df=df, model=model_ensemble, name=f'EnsembleT{timesteps//1000}S{seed}Network{network}',
                                         last_state=last_state_ensemble,  iter_num=i,
                                         unique_trade_date=unique_trade_date,
                                         rebalance_window=rebalance_window,
                                         turbulence_threshold=turbulence_threshold,
                                         initial=initial )
         
-        infos[i] = [model_use, sharpe, volatility, cagr, max_dd, trading_sharpe_a2c, volatility_a2c, cagr_a2c, max_dd_a2c , trading_sharpe_org, volatility_org, cagr_org, max_dd_org ]
      
         print("============Trading Done============")
         ############## Trading ends ##############
 
-    end = time.time()
-    infos = infos.transpose() 
-    infos.columns = ['model_use', 'sharpe', 'volatility', 'cagr', 'max_dd', 'trading_sharpe_a2c', 'volatility_a2c', 'cagr_a2c', 'max_dd_a2c' , 'trading_sharpe_org', 'volatility_org', 'cagr_org', 'max_dd_org' ]
+    intrinsic_value = pd.read_csv(f'results/account_value_trade_IntrinsicT{timesteps//1000}S{seed}.csv',index_col=0, header=None )
+    intrin_sharpe, intrin_vol, intrin_cagr, intrin_maxdd = metrics(intrinsic_value[1])
+    org_value = pd.read_csv(f'results/account_value_trade_OriginalT{timesteps//1000}S{seed}.csv',index_col=0, header=None )
+    org_sharpe, org_vol, org_cagr, org_maxdd = metrics(org_value[1] )
+    ensemble_value = pd.read_csv(f'results/account_value_trade_EnsembleT{timesteps//1000}S{seed}.csv',index_col=0, header=None )
+    ens_sharpe, ens_vol, ens_cagr, ens_maxdd = metrics(ensemble_value[1] ) 
     
+    end = time.time()
+    infos = [ens_sharpe, ens_vol, ens_cagr, ens_maxdd,intrin_sharpe, intrin_vol, intrin_cagr, intrin_maxdd, org_sharpe, org_vol, org_cagr, org_maxdd ]
     print("A2C Strategy took: ", (end - start) / 60, " minutes")
-    return infos 
+    return infos , model_use 
 
 
     
@@ -408,28 +402,23 @@ def run_once(path, preproc=True, network='F', timesteps=6000, v_in_coef=0.1, v_e
         
     
         turbID = int(100*turb_var)
-        name = f'ensembleT{timesteps//1000}S{seed}P{preproc}Tu{turbID}Real'
-        infos = run_a2c_ensemble_strategy(data, network, unique_trade_date, rebalance_window, validation_window,
-                                  timesteps = timesteps, name=name, v_in_coef=v_in_coef,v_ex_coef=v_ex_coef, r_in_coef=r_in_coef, ent_coef=ent_coef, lr_alpha=lr_alpha, lr_beta=lr_beta,
-                                  rms_prop_eps=rms_prop_eps, verbose=verbose, seed=seed, turb_var=turb_var, preproc=preproc, n_steps= n_steps ,start_intrinsic_update=start_intrinsic_update)
-        
-        model_use = infos.model_use 
-        infos = infos.drop(columns=['model_use'])
-        old_infos = infos.copy() 
-        infos.loc['mean'] = old_infos.mean() 
-        infos.loc['median'] = old_infos.median()
-        infos['model_use'] = model_use 
-        
-            
-        return infos 
+        infos , model_use = run_a2c_ensemble_strategy(data, unique_trade_date, rebalance_window, validation_window,
+                              timesteps = timesteps, v_in_coef=v_in_coef,v_ex_coef=v_ex_coef, r_in_coef=r_in_coef, ent_coef=ent_coef, lr_alpha=lr_alpha, lr_beta=lr_beta,
+                              rms_prop_eps=rms_prop_eps, verbose=verbose, seed=seed, turb_var=turb_var, preproc=preproc, n_steps= n_steps ,start_intrinsic_update=start_intrinsic_update)
+
+        f=  open(f"/Users/magdalenelim/Desktop/FYP/results/SUMMARYRESULTS.csv", 'a', newline='')
+        to_append = [['SEED', seed], infos, model_use ]                 
+        csvwriter = csv.writer(f)
+        csvwriter.writerows(to_append)
+        f.close()
+
 
 
 def run(): 
     path = "/Users/magdalenelim/Desktop/FYP/done_data.csv"
     for network in ['F','R']: 
         for seed in [6280, 43136, 85721,17913,51104,35269,8182,40124,5921,3402,9391,6574,43523,10672,75927]: 
-            df = run_once(path,seed=seed, network=network ) 
-            df.to_csv('results/SUMMARYRESULTS.csv',mode='a', header=True)
+            run_once(path,seed=seed, network=network ) 
             
         
 
