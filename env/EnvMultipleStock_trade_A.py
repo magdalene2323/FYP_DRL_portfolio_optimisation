@@ -65,7 +65,7 @@ class StockEnvTrade(gym.Env):
         self.cost = 0
         self.trades = 0
         # memorize all the total balance change
-        self.asset_memory = [INITIAL_ACCOUNT_BALANCE]
+        # self.asset_memory = [INITIAL_ACCOUNT_BALANCE]
         self.rewards_memory = []
         #self.reset()
         self._seed()
@@ -126,16 +126,11 @@ class StockEnvTrade(gym.Env):
         self.terminal = self.day >= len(self.df.index.unique())-1 
         
         if self.terminal:
-            f=  open(f"/Users/magdalenelim/Desktop/FYP/results/last_trade_value.csv", 'a', newline='')
-            to_append3 = [[ self.model_name , self.asset_memory[-1] ]]                 
-            csvwriter = csv.writer(f)
-            csvwriter.writerows(to_append3)
-            f.close()
             plt.plot(self.asset_memory,'r')
             plt.savefig('results/account_value_trade_{}_{}.png'.format(self.model_name, self.iteration))
             plt.close()
             df_total_value = pd.DataFrame(self.asset_memory)
-            df_total_value.to_csv('results/account_value_trade_{}_{}.csv'.format(self.model_name, self.iteration))
+            df_total_value.to_csv('results/account_value_trade_{}.csv'.format(self.model_name), mode='a', header=False)
             end_total_asset = self.state[0]+ \
             sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
             print("previous_total_asset:{}".format(self.asset_memory[0]))           
@@ -145,18 +140,11 @@ class StockEnvTrade(gym.Env):
             print("total_cost: ", self.cost)
             print("total trades: ", self.trades)
 
-            df_total_value.columns = ['account_value']
-            df_total_value['daily_return']=df_total_value.pct_change(1)
-            sharpe = (252**0.5)*df_total_value['daily_return'].mean()/ \
-                  df_total_value['daily_return'].std()
-            print("Sharpe: ",sharpe)
             
             df_rewards = pd.DataFrame(self.rewards_memory)
             df_rewards.to_csv('results/account_rewards_trade_{}_{}.csv'.format(self.model_name, self.iteration))
             
-            # print('total asset: {}'.format(self.state[0]+ sum(np.array(self.state[1:29])*np.array(self.state[29:]))))
-            #with open('obs.pkl', 'wb') as f:  
-            #    pickle.dump(self.state, f)
+         
             
             return self.state, self.reward, self.terminal,{}
 
@@ -246,8 +234,8 @@ class StockEnvTrade(gym.Env):
         else:
             previous_total_asset = self.previous_state[0]+ \
             sum(np.array(self.previous_state[1:(STOCK_DIM+1)])*np.array(self.previous_state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
-            self.asset_memory = [previous_total_asset]
-            #self.asset_memory = [self.previous_state[0]]
+            self.asset_memory = []
+            #self.asset_memory = [previous_total_asset]
             self.day = 0
             self.data = self.df.loc[self.day,:]
             self.turbulence = 0
@@ -256,9 +244,7 @@ class StockEnvTrade(gym.Env):
             self.terminal = False 
             #self.iteration=iteration
             self.rewards_memory = []
-            #initiate state
-            #self.previous_state[(STOCK_DIM+1):(STOCK_DIM*2+1)]
-            #[0]*STOCK_DIM + \
+            
 
             self.state = [ self.previous_state[0]] + \
                           self.data.adjcp.values.tolist() + \
