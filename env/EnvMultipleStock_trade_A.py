@@ -234,8 +234,7 @@ class StockEnvTrade(gym.Env):
         else:
             previous_total_asset = self.previous_state[0]+ \
             sum(np.array(self.previous_state[1:(STOCK_DIM+1)])*np.array(self.previous_state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
-            self.asset_memory = []
-            #self.asset_memory = [previous_total_asset]
+            self.asset_memory = [previous_total_asset] 
             self.day = 0
             self.data = self.df.loc[self.day,:]
             self.turbulence = 0
@@ -243,6 +242,7 @@ class StockEnvTrade(gym.Env):
             self.trades = 0
             self.terminal = False 
             #self.iteration=iteration
+            
             self.rewards_memory = []
             
 
