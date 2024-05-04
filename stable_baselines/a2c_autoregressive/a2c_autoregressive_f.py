@@ -196,7 +196,7 @@ class A2C_autoregressive_f(ActorCriticRLModel):
                 self.DIS_V_IN_LAST = tf.compat.v1.placeholder(tf.float32, [self.n_batch*30], 'DIS_V_IN_LAST')
                 self.COEF_MAT = tf.compat.v1.placeholder(tf.float32, [self.n_batch*30, self.n_batch*30], 'COEF_MAT')
                 self.V_IN = tf.compat.v1.placeholder(tf.float32, [self.n_batch *30], 'V_IN')
-                self.V_EX = tf.compat.v1.placeholder(tf.float32, [self.n_batch *30], 'V_IN')
+                self.V_EX = tf.compat.v1.placeholder(tf.float32, [self.n_batch *30], 'V_EX')
                 
 
                 self.A = tf.compat.v1.placeholder(tf.float32, [None, None], 'A') # used 
@@ -226,38 +226,51 @@ class A2C_autoregressive_f(ActorCriticRLModel):
                 self.pg_mix_loss = tf.reduce_mean(adv_mix * neglogpac)
                 self.v_in_loss  = tf.reduce_mean(mse(tf.squeeze(train_model.v_mix), ret_in)) # train_model.v_mix = v_in 
                 
-                
+                self.params = tf_util.get_trainable_vars("policy") # PI and V_IN parameters
+                self.params1 = tf_util.get_trainable_vars("policy")[:7]  # PI only 
 
                 policy_loss = self.pg_mix_loss - self.ent_coef * self.entropy + self.v_in_coef * self.v_in_loss
+                policy_loss1= self.pg_mix_loss - self.ent_coef * self.entropy  
+
                 with tf.compat.v1.variable_scope("policy_info", reuse=False): 
                     tf.compat.v1.summary.scalar('entropy_loss', self.entropy)
                     tf.compat.v1.summary.scalar('pg_mix_loss', self.pg_mix_loss)
                     tf.compat.v1.summary.scalar('v_mix_loss', self.v_in_loss)
                     tf.compat.v1.summary.scalar('policy_loss', policy_loss)
                     
-                self.params = tf_util.get_trainable_vars("policy") # I think first 16?  
                 
                 
                 
-                grads = tf.gradients(policy_loss, self.params)   # Using train_model 
+                
+                
+                grads = tf.gradients(policy_loss, self.params)  
+                grads1 = tf.gradients(policy_loss1, self.params1)  
                 
                 if self.max_grad_norm is not None:  # max_grad_norm defines the maximum gradient, needs to be normalized
                     # Clip the gradients (normalize)
                     grads, _ = tf.clip_by_global_norm(grads, self.max_grad_norm)
+                    grads1, _ = tf.clip_by_global_norm(grads1, self.max_grad_norm)
                 grads_and_vars = list(zip(grads, self.params))  # zip pg and policy params correspondingly, policy_grads_and_vars in LIRPG
-                
+                grads_and_vars1 = list(zip(grads1, self.params1))
+
                 trainer = tf.compat.v1.train.RMSPropOptimizer(learning_rate=self.LR_ALPHA, decay=self.alpha,
                                                     epsilon=self.epsilon, momentum=self.momentum) #Initialize optimizer 
-                
-                self.policy_train = trainer.apply_gradients(grads_and_vars)  
+                trainer1 = tf.compat.v1.train.RMSPropOptimizer(learning_rate=self.LR_ALPHA, decay=self.alpha, 
+                                                    epsilon=self.epsilon, momentum=self.momentum) 
+
+
+                self.policy_train = trainer.apply_gradients(grads_and_vars) 
+                self.policy_train1 = trainer1.apply_gradients(grads_and_vars1) 
                 
                 rmss = [trainer.get_slot(var, 'rms') for var in self.params]   
-                
+
+
                 self.params_new = {}
                 for grad, rms, var in zip(grads, rmss, self.params):
                     ms = rms + (tf.square(grad) - rms) * (1 - self.alpha) # wrong in this line
                     self.params_new[var.name] = var - self.LR_ALPHA * grad / tf.sqrt(ms + self.epsilon)  
-                    
+                
+
 
                 self.policy_new = None
                 self.policy_new = train_model.policy_new_fn(self.params_new, self.observation_space, self.action_space, self.n_envs*self.n_steps*30, self.n_steps*30, self.train_model_avg_feature, self.train_model_std_feature)
