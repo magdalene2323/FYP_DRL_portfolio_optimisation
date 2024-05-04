@@ -470,7 +470,7 @@ class A2C_autoregressive_f(ActorCriticRLModel):
                 
                        
                 obs, actions, ob_nx, r_in, r_ex, ret_ex, ret_in, \
-                v_ex, v_in, last_v_ex, last_v_in, \
+                v_ex, v_in, last_v_ex, last_v_in, dones \
                 ep_info, ep_r_ex, ep_r_in, ep_len = rollout 
                 
               
@@ -487,6 +487,9 @@ class A2C_autoregressive_f(ActorCriticRLModel):
                             break
                         coef_mat[i][j] = coef
                         coef *= self.gamma 
+                        if dones[j]:
+                            dis_v_in_last[i] = 0
+                            break
 
 
 
@@ -518,13 +521,6 @@ class A2C_autoregressive_f(ActorCriticRLModel):
                
             
 
-                if update % 500 == 0:
-                    f=  open(f"/Users/magdalenelim/Desktop/FYP/results/{self.model_type}_loss.csv", 'a', newline='')
-                    to_append3 = [['update', 'pg_mix_loss','pg_ex_loss', 'value_in_loss', 'value_ex_loss', 'policy_entropy', 'policy_loss', 'intrinsic_loss','r_in', 'r_ex', 'last_v_in', 'last_v_ex', 'ret_in', 'ret_ex', 'actions'],  [update, pg_mix_loss,pg_ex_loss, value_in_loss, value_ex_loss, policy_entropy, policy_loss, intrinsic_loss, r_in, r_ex, last_v_in, last_v_ex, ret_in, ret_ex, actions]]                 
-                    csvwriter = csv.writer(f)
-                    csvwriter.writerows(to_append3)
-                    f.close()
-                    
             
                 n_seconds = time.time() - t_start
                 # Calculate the fps (frame per second)
@@ -654,12 +650,12 @@ class A2C_autoregressive_runner(AbstractEnvRunner):
                 new_action, v_ex, v_in, _, _ = self.model.step(input_ )
                 
                 mb_obs.append(np.copy(input_))
-                
+                mb_actions.append(new_action) 
                 
                 new_action = np.clip(new_action,  -1, 1) 
                 
                 action_ph[0,j] = new_action 
-                mb_actions.append(new_action) 
+                
                 mb_v_in.append(v_in) 
                 mb_v_ex.append(v_ex)
                 
@@ -672,18 +668,26 @@ class A2C_autoregressive_runner(AbstractEnvRunner):
                     mb_r_in.append(r_in)
                     mb_obs_next.append(next_input_ )
                     
-                elif j == STOCK_DIM - 1:                     
+                elif j == STOCK_DIM - 1:    
+                    old_obs =np.copy( self.obs)                  
                     self.obs, r_ex, self.dones, infos = self.env.step(action_ph)
                     if self.dones: 
-                        mb_obs,mb_actions, mb_v_in,mb_v_ex ,mb_r_ex, mb_obs_next, mb_r_in = [], [] , [] , [],[], [] ,[]
-                        break 
-                    mb_r_ex.append(r_ex) 
-                    action_ph = np.zeros(shape=(1,30))
-                    next_input_ = np.concatenate(( np.copy(self.obs) , action_ph), axis=1 ).reshape((1,OB_SPACE_SHAPE+30))
-                    mb_obs_next.append(next_input_ )
-                    r_in = self.model.intrinsic_reward(ob= input_ , ac=new_action , ob_nx=next_input_ ) 
-                    mb_r_in.append(r_in)
-                    last_v_ex, last_v_in = self.model.value(ob =next_input_ ) 
+                        r_ex= np.array([0]) 
+                        mb_r_ex.append(r_ex) 
+                        next_input_ = np.concatenate(( old_obs , action_ph), axis=1 ).reshape((1,OB_SPACE_SHAPE+30))
+                        mb_obs_next.append(next_input_ )
+                        r_in = self.model.intrinsic_reward(ob= input_ , ac=new_action , ob_nx=next_input_ ) 
+                        mb_r_in.append(r_in)
+                        last_v_ex, last_v_in = self.model.value(ob =next_input_ ) 
+                    
+                    else: 
+                        mb_r_ex.append(r_ex) 
+                        action_ph = np.zeros(shape=(1,30))
+                        next_input_ = np.concatenate(( np.copy(self.obs) , action_ph), axis=1 ).reshape((1,OB_SPACE_SHAPE+30))
+                        mb_obs_next.append(next_input_ )
+                        r_in = self.model.intrinsic_reward(ob= input_ , ac=new_action , ob_nx=next_input_ ) 
+                        mb_r_in.append(r_in)
+                        last_v_ex, last_v_in = self.model.value(ob =next_input_ ) 
                 
                     i+= STOCK_DIM 
                     
@@ -713,16 +717,22 @@ class A2C_autoregressive_runner(AbstractEnvRunner):
         
         for n, (r_ex, r_in, v_ex, v_in) in enumerate(zip(mb_r_ex, mb_r_in, last_v_ex, last_v_in)): 
             r_ex, r_in = r_ex.tolist(), r_in.tolist() 
-            dones = [False] * 30 
-            ret_ex = discount_with_dones(r_ex + [0.99*v_ex], dones + [0], 1)[:-1] 
-            ret_in = discount_with_dones(r_in+ [v_in ], dones + [0], self.gamma )[:-1]   # Ret_in 
-         
-             
-            mb_ret_ex[n], mb_ret_in[n] = ret_ex, ret_in
+            dones = [False] * 29 + [ self.dones[0] ]  
+            if dones[-1] == 0:   # last state not terminal        
+                ret_ex = discount_with_dones(r_ex + [0.99*v_ex], dones + [0], 1)[:-1] 
+                ret_in = discount_with_dones(r_in+ [v_in ], dones + [0], self.gamma )[:-1]   # Ret_in 
+            else: # last state terminal. 
+                ret_ex = discount_with_dones(r_ex, dones, 1 )
+                ret_in = discount_with_dones(r_in, dones, self.gamma)
             
+            #mb_rewards[n] = rewards
+            mb_ret_ex[n], mb_ret_in[n] = ret_ex, ret_in 
+
+
             
        
-
+        mb_dones = [False] * 29 + [ self.dones[0] ]   
+        mb_dones = np.asarray(mb_dones, dtype=np.bool_) # (30,) array 
         mb_r_ex = mb_r_ex.flatten()
         mb_r_in = mb_r_in.flatten()
         mb_ret_ex = mb_ret_ex.flatten()
@@ -733,6 +743,6 @@ class A2C_autoregressive_runner(AbstractEnvRunner):
     
         
         return mb_obs, mb_actions,mb_obs_nx,mb_r_in, mb_r_ex, mb_ret_ex, mb_ret_in, \
-               mb_v_ex, mb_v_in, last_v_ex, last_v_in, \
+               mb_v_ex, mb_v_in, last_v_ex, last_v_in, mb_dones, \
                ep_info, ep_r_ex, ep_r_in, ep_len 
         
